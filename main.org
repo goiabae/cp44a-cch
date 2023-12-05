@@ -1,0 +1,193 @@
+#+title: CCH Cálculo 4B CP44A
+#+author: Guilherme Martins Machadoo
+
+#+bibliography: ref.bib
+
+* o que é uma transformada de fourier?
+
+A transformada de  converte uma função do domínio do tempo para o domínio da frequência.
+
+$$ \hat{f}(\omega) = \mathcal{F}\{f(t)\} = \frac{1}{\sqrt{2 \pi}} \int_{-\infty}^\infty f(t) e^{-i\omega t} dt$$
+
+* quem é fourier
+
+Jean Baptiste Joseph Fourier foi um matemático francês. Desenvolveu a transformada $\mathcal{F}$ para a solução de problemas de condução de calor.
+
+* equivalente discreto
+
+Aproximação. Transforma uma sequência de tempo em uma sequência de frequência.
+
+$$ \left\{ x_t \right\}_{t=0}^n \Rightarrow \left\{ X_\omega \right\}_{\omega=0}^n $$
+
+$$ X_\omega = \sum_{t=0}^{n-1} x_t \cdot e^{-\frac{i2\pi}{n}\omega t} $$
+
+$$ x_t = \frac{1}{n} \sum_{\omega=0}^{n-1} X_\omega \cdot e^{\frac{i2\pi}{n}\omega t} $$
+
+* musica
+
+Em [cite:@emmanuel2016], o autor provê uma relação acordes e sequências $X_\omega$, construindo uma algebra para sua manipulação e compreensão.
+
+* exemplo
+
+Baixando o volume do trompete no começo de "Blue in Green".
+
+* baixando o audio
+
+Baixamos o vídeo do YouTube e extraímos as faixas de áudio para um arquivo temporário.
+
+#+name: temp-dir
+#+begin_src python :session *py* :results value
+from yt_dlp import YoutubeDL
+from tempfile import gettempdir
+import os
+
+tmp = os.path.join(gettempdir(), "yt_dlp")
+opts = {
+  'paths': { 'temp': tmp, 'home': tmp },
+  'outtmpl': { 'default': "%(id)s.%(ext)s" },
+  'format': '248+251', # webm + opus
+  'postprocessors': [{
+    'key': 'FFmpegExtractAudio',
+    'preferredcodec': 'wav',
+  }]
+}
+
+fmt = "wav"
+yt = YoutubeDL(opts)
+id = "TLDflhhdPCg"
+input = os.path.join(tmp, f"{id}.{fmt}")
+
+if not os.path.exists(input):
+  yt.download(f"https://youtube.com/watch?v={id}")
+
+tmp
+#+end_src
+
+#+RESULTS: temp-dir
+: /tmp/yt_dlp
+
+#+begin_src shell :var dir=temp-dir :results none
+mpv --force-window --no-terminal "${dir}/TLDflhhdPCg.wav"
+#+end_src
+
+* preparando as faixas
+
+Lemos as faixas na memória e selecionamos um intervalo específico para filtrar.
+
+#+begin_src python :session *py* :results none
+import numpy as np
+import scipy.io.wavfile as wav
+
+sample_rate, stereo = wav.read(input)
+
+from_time = 19
+to_time = 29
+duration = to_time - from_time
+
+sample_count = sample_rate * duration
+from_sample = from_time * sample_rate
+to_sample = to_time * sample_rate
+
+left = stereo[:, 0][from_sample:to_sample]
+right = stereo[:, 1][from_sample:to_sample]
+
+original = np.copy(np.column_stack((left, right)))
+#+end_src
+
+* aplicando o filtro
+
+Filtramos todos os harmônicos das frequências próximas à frequência fundamental.
+
+#+begin_src python :session *py* :results none
+from numpy.fft import fft, fftfreq, ifft
+from numpy     import copy, column_stack, bitwise_and, arange
+
+fund = 667  # freq fund
+harm = 24   # numero de harmonicos
+marg = 12   # raio ao redor do harmônico
+gain = 0.15 # ganho em percent
+
+def filter(y):
+  Y = fft(copy(y))
+  freqs = fftfreq(len(Y), 1 / sample_rate)
+
+  def f(h):
+    more_than = abs(freqs) >= ((fund - marg)*h)
+    less_than = abs(freqs) <= ((fund + marg)*h)
+    return ~ (more_than & less_than)
+
+  mask = [f(h) for h in arange(1, harm)]
+  mask = bitwise_and.reduce(mask)
+
+  Y.real = Y.real * mask + Y.real * (gain * ~mask)
+  Y.imag = Y.imag * mask + Y.imag * (gain * ~mask)
+
+  return ifft(Y).real
+
+left = filter(left)
+right = filter(right)
+
+filtered = column_stack((left, right))
+#+end_src
+
+#+RESULTS:
+
+* comparando as ondas
+
+Plotamos ambas as ondas no tempo.
+
+#+begin_src python :session *py* :results value file
+import matplotlib.pyplot as plt
+
+time = arange(len(original)) / sample_rate
+
+plt.figure(figsize=(12, 6))
+
+plt.subplot(2, 1, 1)
+plt.plot(time, original)
+plt.title('Sinal original')
+plt.xlabel('Tempo (segundos)')
+
+plt.subplot(2, 1, 2)
+plt.plot(time, filtered)
+plt.title('Sinal filtrado')
+plt.xlabel('Tempo (segundos)')
+
+plt.tight_layout()
+
+png = os.path.join(tmp, 'plot.png')
+plt.savefig(png)
+png
+#+end_src
+
+#+RESULTS:
+[[file:/tmp/yt_dlp/plot.png]]
+
+* avaliando o resultado
+
+Finalmente, tocamos os arquivos resultantes.
+
+#+begin_src python :session *py* :results value
+before = os.path.join(tmp, f"before.{fmt}")
+wav.write(before, sample_rate, original.astype(np.int16))
+
+after = os.path.join(tmp, f"after.{fmt}")
+wav.write(after, sample_rate, filtered.astype(np.int16))
+
+(before, after)
+#+end_src
+
+#+RESULTS:
+| /tmp/yt_dlp/before.wav | /tmp/yt_dlp/after.wav |
+
+#+begin_src shell :var dir=temp-dir :results none
+mpv --no-terminal "${dir}/before.wav"
+#+end_src
+
+#+begin_src shell :var dir=temp-dir :results none
+mpv --no-terminal "${dir}/after.wav"
+#+end_src
+
+* conclusões
+
+Trabalho disponível em https://github.com/goiabae/cch-cp44a.
